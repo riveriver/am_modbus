@@ -7,58 +7,34 @@
  */
 
 #include <stdio.h>
-
+#include <string.h>
 #include "main.h"
-
 #include "cmsis_os.h"
 #include "FreeRTOS.h"
 #include "task.h"
 #include "queue.h"
 #include "timers.h"
 #include "semphr.h"
-
 #include "Modbus.h"
-#include "modbus_tcp_server_reg.h"
 
-
-#define LOG_D(...)    // LOG_DEBUG("MODBUS", __VA_ARGS__)
-#define LOG_I(...)    LOG_INFO("MODBUS", __VA_ARGS__)
-#define LOG_E(...)    LOG_ERR("MODBUS", __VA_ARGS__)
-uint16_t ghost_err_count = 0;
-bool am_modbus_debug_flag = true;
-static char am_modbus_debug_buf[256];
-static void debug_log_recv_frame(modbusHandler_t *modH)
+static void error_log_recv_frame(uint8_t id, const uint8_t *buf, uint16_t len)
 {
-    if(!am_modbus_debug_flag) {
-        return;
-    }
-    char uart_str[8] = "unknown";
-    if(modH->port == &huart2){
-        strcpy(uart_str, "U2");
-    }else if(modH->port == &huart3){
-        strcpy(uart_str, "U3");
-    }else if(modH->port == &huart7){
-        strcpy(uart_str, "U7");
-    }else if(modH->port == &huart8){
-        strcpy(uart_str, "U8");
-    }
-	int len = snprintf(am_modbus_debug_buf, sizeof(am_modbus_debug_buf), "[%s]R:", uart_str);
-	for (uint16_t i = 0; i < modH->u8BufferSize && len < (int)sizeof(am_modbus_debug_buf) - 4; i++) {
-		len += snprintf(am_modbus_debug_buf + len, sizeof(am_modbus_debug_buf) - len, "%02X ", modH->u8Buffer[i]);
+	char frame_str[256];
+	int w = snprintf(frame_str, sizeof(frame_str), "%02X,%u,", id, (unsigned)len);
+	if (w < 0) {
+		return;
 	}
-	if (modH->u8BufferSize > 0 && len > 0 && am_modbus_debug_buf[len-1] == ' ') {
-		am_modbus_debug_buf[len-1] = '\0';
-		len--;
+
+	for (uint16_t i = 0; i < len && w < (int)sizeof(frame_str) - 4; ++i) {
+		if (w < (int)sizeof(frame_str) - 2) {
+			frame_str[w++] = ' ';
+			frame_str[w] = '\0';
+		}
+		w += snprintf(frame_str + w, sizeof(frame_str) - (size_t)w, "%02X", buf[i]);
 	}
-	if (len < (int)sizeof(am_modbus_debug_buf) - 2) {
-		am_modbus_debug_buf[len++] = '\r';
-		am_modbus_debug_buf[len++] = '\n';
-		am_modbus_debug_buf[len] = '\0';
-	}
-	LOG_D("%s", am_modbus_debug_buf);
+
+	LOG_E("%s\r\n", frame_str);
 }
-
-
 
 #if ENABLE_TCP == 1
 #include "api.h"
@@ -115,18 +91,12 @@ const osThreadAttr_t myTaskModbusB_attributesTCP = {
 	.stack_size = 512 * 4
 };
 
-
-
-
 //Semaphore to access the Modbus Data
 const osSemaphoreAttr_t ModBusSphr_attributes = {
     .name = "ModBusSphr"
 };
 
-
 uint8_t numberHandlers = 0;
-
-
 static void sendTxBuffer(modbusHandler_t *modH);
 static int16_t getRxBuffer(modbusHandler_t *modH);
 static uint8_t validateAnswer(modbusHandler_t *modH);
@@ -141,23 +111,17 @@ static int8_t process_FC5( modbusHandler_t *modH);
 static int8_t process_FC6(modbusHandler_t *modH );
 static int8_t process_FC15(modbusHandler_t *modH );
 static int8_t process_FC16(modbusHandler_t *modH);
-#include <string.h>
 static void vTimerCallbackT35(TimerHandle_t *pxTimer);
 static void vTimerCallbackTimeout(TimerHandle_t *pxTimer);
 static int8_t SendQuery(modbusHandler_t *modH ,  modbus_t telegram);
 static void mb_trim_sticky_packet(modbusHandler_t *modH);
 
 #if ENABLE_TCP ==1
-
 static bool TCPwaitConnData(modbusHandler_t *modH);
 static void  TCPinitserver(modbusHandler_t *modH);
 static mb_errot_t TCPconnectserver(modbusHandler_t * modH, modbus_t *telegram);
 static mb_errot_t TCPgetRxBuffer(modbusHandler_t * modH);
-
 #endif
-
-
-
 
 /* Ring Buffer functions */
 // This function must be called only after disabling USART RX interrupt or inside of the RX interrupt
@@ -743,8 +707,6 @@ void StartTaskModbusSlave(void *argument)
 
    }
 
-//    debug_log_recv_frame(modH);
-	
    if (modH->u8BufferSize < 7)
    {
       //The size of the frame is invalid
@@ -1228,8 +1190,6 @@ wait_response_rtu:
 	  
 #endif
 
-    // debug_log_recv_frame(modH);	
-
 #if ENABLE_TCP == 1
     if(modH->xTypeHW != TCP_HW)
 #endif
@@ -1237,11 +1197,9 @@ wait_response_rtu:
 	// Drop late/sticky frames whose slave id does not match the current request
 	if (modH->u8Buffer[ID] != telegram.u8id)
 	{
-		ghost_err_count++;
-		mb_set_input_reg_by_address(MB_INPUT_REGISTERS[REG_GROUP_ERROR_COUNT].address, ghost_err_count);
 		modH->i8state = COM_IDLE;
 		modH->i8lastError = ERR_BAD_SLAVE_ID;
-		LOG_E("ERR_BAD_SLAVE_ID id: 0x%02X, expected 0x%02X\n", modH->u8Buffer[ID], telegram.u8id);
+		error_log_recv_frame(telegram.u8id, modH->u8Buffer, modH->u8BufferSize);
 		xTaskNotify((TaskHandle_t)telegram.u32CurrentTask, modH->i8lastError, eSetValueWithOverwrite);
 		continue;
 	}
@@ -1251,11 +1209,7 @@ wait_response_rtu:
 		  modH->i8state = COM_IDLE;
 		  modH->i8lastError = ERR_BAD_SIZE;
 		  modH->u16errCnt++;
-		  // Print a clear failure banner before dump
-		  LOG_E("BAD_SIZE,size=%u ", (unsigned)modH->u8BufferSize);
-		  if (modH->u8BufferSize >= 2) {
-			  LOG_E("id=0x%02X func=0x%02X\r\n", modH->u8Buffer[0], modH->u8Buffer[1]);
-		  }
+		  error_log_recv_frame(telegram.u8id, modH->u8Buffer, modH->u8BufferSize);
 		  xTaskNotify((TaskHandle_t)telegram.u32CurrentTask, modH->i8lastError, eSetValueWithOverwrite);
 		  continue;
 	  }
@@ -1272,11 +1226,7 @@ wait_response_rtu:
 	  {
 		 modH->i8state = COM_IDLE;
          modH->i8lastError = u8exception;
-		// Print a clear failure banner with error code and basic header fields (if present)
-		LOG_E("VALIDATE err=0x%02X size=%u\r\n", (unsigned)u8exception, (unsigned)modH->u8BufferSize);
-		if (modH->u8BufferSize >= 2) {
-				LOG_E("id=0x%02X func=0x%02X\r\n", modH->u8Buffer[0], modH->u8Buffer[1]);
-		}
+		error_log_recv_frame(telegram.u8id, modH->u8Buffer, modH->u8BufferSize);
 		 xTaskNotify((TaskHandle_t)telegram.u32CurrentTask, modH->i8lastError, eSetValueWithOverwrite);
 	     continue;
 	  }
