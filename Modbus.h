@@ -9,7 +9,7 @@
 #define THIRD_PARTY_MODBUS_INC_MODBUS_H_
 
 
-#include "ModbusConfig.h"
+#include "am_modbus_config.h"
 #include <inttypes.h>
 #include <stdbool.h>
 #include "FreeRTOS.h"
@@ -18,6 +18,32 @@
 #include "queue.h"
 #include "timers.h"
 
+#ifndef T35
+#define T35  5              // Timer T35 period (in ticks) for end frame detection.
+#endif
+
+#ifndef MAX_BUFFER
+#define MAX_BUFFER  256	    // Maximum size for the communication buffer in bytes.
+#endif
+
+#ifndef TIMEOUT_MODBUS
+#define TIMEOUT_MODBUS 1000 // Timeout for master query (in ticks)
+#endif
+
+#ifndef MAX_M_HANDLERS
+#define MAX_M_HANDLERS 4   //Maximum number of modbus handlers that can work concurrently
+#endif
+
+#ifndef MAX_TELEGRAMS 
+#define MAX_TELEGRAMS 6     //Max number of Telegrams in master queue
+#endif
+
+#if ENABLE_TCP == 1
+#define NUMBERTCPCONN   4   // Maximum number of simultaneous client connections, it should be equal or less than LWIP configuration
+#define TCPAGINGCYCLES	1000 // Number of times the server will check for a incoming request before closing the connection for inactivity
+/* Note: the total aging time for a connection is approximately NUMBERTCPCONN*TCPAGINGCYCLES*u16timeOut ticks
+*/
+#endif
 
 typedef enum
 {
