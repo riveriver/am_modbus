@@ -8,8 +8,6 @@
 #ifndef THIRD_PARTY_MODBUS_INC_MODBUS_H_
 #define THIRD_PARTY_MODBUS_INC_MODBUS_H_
 
-
-#include "am_modbus_config.h"
 #include <inttypes.h>
 #include <stdbool.h>
 #include "FreeRTOS.h"
@@ -17,6 +15,7 @@
 #include "task.h"
 #include "queue.h"
 #include "timers.h"
+#include "am_modbus_config.h"
 
 #ifndef T35
 #define T35  5              // Timer T35 period (in ticks) for end frame detection.
